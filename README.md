@@ -1,156 +1,303 @@
-# DataMart S.A.S. — Pipeline ETL con Apache Airflow y PostgreSQL
+# 🛒 DataMart S.A.S. — Retail ETL & Analytical Data Warehouse
 
-Proyecto para la prueba de desempeño **Pipeline ETL con Apache Airflow y Data Warehouse**. La solución procesa dos fuentes CSV, estandariza sus esquemas, separa ventas y devoluciones, registra rechazos, deduplica registros y carga un repositorio analítico PostgreSQL mediante un DAG diario de Airflow en Docker.
+<p align="center">
+  <strong>From raw retail CSV files to a validated PostgreSQL analytical warehouse</strong><br>
+  <em>Orchestrated with Apache Airflow · Built with Python and pandas · Containerized with Docker</em>
+</p>
 
-> **Estado honesto:** las pruebas unitarias y validaciones estáticas incluidas pasan en el entorno de preparación. No se ha podido validar el arranque real de Docker desde aquí y los CSV completos no están incluidos. La ejecución integral se debe confirmar en un equipo con Docker y los datasets reales.
+<p align="center">
+  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
+  <img alt="Apache Airflow 2.10.5" src="https://img.shields.io/badge/Apache%20Airflow-2.10.5-017CEE?logo=apacheairflow&logoColor=white">
+  <img alt="PostgreSQL 16" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white">
+  <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white">
+  <img alt="pandas" src="https://img.shields.io/badge/pandas-Data%20Processing-150458?logo=pandas&logoColor=white">
+</p>
 
-## 1. Arquitectura
+## 📌 Project overview
+
+DataMart S.A.S. is a retail data engineering project that processes two CSV sources and loads validated, deduplicated records into a PostgreSQL analytical warehouse. Apache Airflow orchestrates the workflow, while Python and pandas handle extraction, normalization, transformation, and quality checks.
+
+The pipeline separates valid transactions from rejected records, preserves rejection details for auditing, and validates the warehouse after loading.
+
+## 🧰 Technology stack
+
+| Technology | Role in the project |
+|---|---|
+| 🐍 Python 3.11 | ETL logic, validation and orchestration code |
+| 🌬️ Apache Airflow 2.10.5 | DAG scheduling, dependencies, retries and task logs |
+| 🐼 pandas | CSV ingestion, data cleaning and transformation |
+| 🐘 PostgreSQL 16 | Analytical warehouse and audit tables |
+| 🔌 psycopg2 | PostgreSQL connections and batch inserts |
+| 🐳 Docker Compose | Reproducible local services |
+| 📄 CSV and JSON | Input files and intermediate staging data |
+| 🧪 pytest / Ruff | Testing and code quality, when configured in the repository |
+
+## 🏗️ Architecture
 
 ```mermaid
-flowchart LR
-    A[CSV ecommerce-data] --> E[Airflow: extracción]
-    B[CSV Online Retail Transaction Data] --> E
-    E --> T[Normalización y deduplicación]
-    T --> Q[Validación de calidad]
-    Q --> W[(PostgreSQL Data Warehouse)]
-    Q --> R[Registro de rechazos]
-    W --> S[Consultas SQL de negocio]
-    M[(PostgreSQL de metadatos)] --- E
+flowchart TD
+    A[CSV source: data.csv] --> C[Airflow extraction]
+    B[CSV source: online_retail.csv] --> C
+    C --> D[Staging CSV files]
+    D --> E[Normalize and transform]
+    E --> F[Deduplicate transactions]
+    F --> G[Pre-load quality checks]
+    G --> H[PostgreSQL Data Warehouse]
+    E --> I[Rejected records and audit payloads]
+    I --> H
+    H --> J[dim_product]
+    H --> K[fact_transactions]
+    H --> L[rejected_records]
+    H --> M[Final warehouse validation]
 ```
 
-Hay dos bases PostgreSQL separadas: `airflow-db` guarda los metadatos de Airflow; `warehouse-db` guarda las tablas analíticas. El servicio `airflow-init` configura usuario administrador, conexión y variables antes de iniciar webserver y scheduler.
+## 🔄 ETL workflow
 
-## 2. Estructura del repositorio
+The Airflow DAG is named `datamart_daily_etl`.
 
-- `docker-compose.yml`: servicios de Airflow y PostgreSQL.
-- `Dockerfile`, `requirements.txt`: imagen de Airflow con dependencias del ETL.
-- `dags/datamart_etl_dag.py`: DAG diario y dependencias entre tareas.
-- `dags/etl_pipeline.py`: lógica de transformación, validación, deduplicación y categorías.
-- `sql/001_schema.sql`: creación de tablas, índices y vista.
-- `sql/queries.sql`: consultas para las preguntas de negocio.
-- `scripts/init_env.py`: genera `.env` local con secretos aleatorios.
-- `scripts/profile_sources.py`: explora los CSV y genera un perfil de columnas, nulos y duplicados.
-- `docs/decisiones_tecnicas.md`: decisiones y limitaciones.
-- `docs/data_model.dbml`: diagrama compatible con dbdiagram.io.
-- `tests/`: pruebas unitarias de las reglas principales.
-- `data/seeds/`: archivos sintéticos pequeños para pruebas de humo; no representan los resultados reales.
+1. **`extract_source_one`** — locates and extracts the primary CSV source.
+2. **`extract_source_two`** — locates and extracts the second CSV source.
+3. **`transform_data`** — normalizes fields, validates records, deduplicates equivalent transactions, and writes intermediate JSON files.
+4. **`validate_quality`** — checks transaction keys, prices, transaction types, and revenue calculations before loading.
+5. **`load_warehouse`** — loads the product dimension, transaction facts, and rejected records into PostgreSQL.
+6. **`validate_warehouse`** — checks the stored tables, duplicate keys, invalid prices, revenue consistency, and final row counts.
 
-## 3. Requisitos
+The two extraction tasks run in parallel. Transformation follows both extractions, and the final warehouse validation must run after `load_warehouse`.
 
-- Docker Desktop o Docker Engine con Docker Compose v2.
-- Python 3.11 recomendado para scripts y pruebas locales.
-- Aproximadamente 4 GB de memoria disponible para Docker.
-- Puertos locales `8080` y `5433` libres.
+## 🗄️ Analytical data model
 
-## 4. Preparar las fuentes de datos
+The pipeline expects these tables in the PostgreSQL `analytics` schema:
 
-La prueba exige dos fuentes:
+| Table | Purpose |
+|---|---|
+| `analytics.dim_product` | Product dimension: product code, canonical description, and category |
+| `analytics.fact_transactions` | Valid sales and returns, transaction identifiers, quantities, prices, timestamps, and revenue measures |
+| `analytics.rejected_records` | Rejected input records, rejection reason, source name, and JSON payload for audit |
 
-1. Fuente de transacciones: [Kaggle — E-Commerce Data](https://www.kaggle.com/datasets/carrie1/ecommerce-data). Coloca `data.csv` en `data/raw/data.csv`.
-2. Fuente histórica elegida: [Kaggle — Online Retail Transaction Data](https://www.kaggle.com/datasets/thedevastator/online-retail-transaction-data). Descarga el archivo de datos de esa página y colócalo como `data/raw/online_retail_II.csv`. Este es el nombre local esperado por el proyecto; no presupone el nombre original que Kaggle dé al archivo.
+Products without a category in the source data receive the placeholder category `UNCLASSIFIED`. This value indicates that the product has not been classified; it does not represent a guessed product category.
 
-Los archivos completos no se incluyen en este ZIP. Deben descargarse desde las fuentes y usarse de acuerdo con sus condiciones de licencia. No uses los CSV sintéticos de `data/seeds/` para calcular resultados finales de negocio.
+## 🛡️ Data quality and idempotency
 
-### Perfilado inicial (antes del ETL)
+The pipeline includes checks for:
 
-Desde la carpeta raíz, ejecuta:
+- Missing invoice or product identifiers.
+- Invalid invoice dates and numeric values.
+- Missing or non-positive unit prices.
+- Fractional quantities in a dataset expected to use whole-unit quantities.
+- Duplicate transaction keys across sources.
+- Allowed transaction types: `SALE` and `RETURN`.
+- Revenue consistency: `net_revenue = gross_revenue - return_amount`.
+- Null or duplicate transaction keys in the warehouse.
+
+The fact load uses `ON CONFLICT (transaction_key) DO NOTHING`. Product rows use `ON CONFLICT (product_code) DO UPDATE`, and rejected rows use `ON CONFLICT (rejection_key) DO NOTHING`. These safeguards rely on the matching unique constraints being present in the database schema.
+
+## 📸 Execution evidence
+
+### 1. Airflow DAG
+
+The screenshot below was provided during project execution and shows the DAG graph with the extraction, transformation, quality validation, warehouse load, and final validation tasks displayed as successful in that captured run.
+
+![Airflow DAG execution evidence](docs/evidence/airflow-dag-success.png)
+
+### 2. PostgreSQL warehouse validation
+
+The validator output below was provided from the project terminal. It reports that the required tables exist and that the implemented checks for null transaction keys, duplicate keys, invalid prices, and revenue consistency passed.
+
+![Data Warehouse validation evidence](docs/evidence/warehouse-validation.png)
+
+### 📊 Reported warehouse results
+
+The supplied validation output reported the following figures:
+
+| Metric | Reported value |
+|---|---:|
+| Products in `dim_product` | 3,828 |
+| Transactions in `fact_transactions` | 935,689 |
+| Rejected records | 5,024 |
+| Sales | 917,566 |
+| Returns | 18,123 |
+| Gross revenue | 19,528,216.00 |
+| Return amount | 1,502,669.20 |
+| Net revenue | 18,025,546.80 |
+
+These figures reflect the run shown in the supplied evidence. Re-run the validator after subsequent code or data changes before treating them as the current totals.
+
+## 🚀 Getting started
+
+### Prerequisites
+
+- Docker Desktop with Docker Compose.
+- Git, if cloning the repository.
+- Source CSV files included in or provided to the project.
+- A configured Airflow connection named `warehouse_postgres`.
+- PostgreSQL DDL that creates the required tables and unique constraints.
+
+### 1. Clone the repository
+
+Replace the placeholder with the Git URL provided by the evaluator:
 
 ```bash
-python -m pip install pandas pytest
-python scripts/profile_sources.py
+git clone <REPOSITORY_URL>
+cd DataMart-S.A.S
 ```
 
-El script informa si faltan archivos y, cuando están presentes, registra filas, encabezados, nulos y duplicados exactos en `reports/source_profile.json`. Abre el perfil y confirma que la segunda fuente tenga campos equivalentes a factura, código de producto, descripción, cantidad, fecha, precio, cliente y país. El transformador mapea alias habituales; si el CSV real usa nombres diferentes, ajusta `aliases` en `dags/etl_pipeline.py` y añade una prueba antes de ejecutar el pipeline.
+### 2. Configure environment variables
 
-## 5. Inicio desde cero
+Copy the example environment file:
 
-Abre una terminal en la carpeta raíz del repositorio.
+**PowerShell**
+```powershell
+Copy-Item .env.example .env
+```
 
-### Paso 1 — Generar secretos locales
-
+**macOS / Linux**
 ```bash
-python scripts/init_env.py
+cp .env.example .env
 ```
 
-Esto crea `.env` sin sobrescribir un archivo existente. No subas `.env` a Git. El usuario de Airflow es `admin`; su contraseña queda en `AIRFLOW_ADMIN_PASSWORD` dentro de `.env`.
+Set local values in `.env`. Do not commit `.env` or real credentials. Keep `.env.example` populated with variable names and safe example values only.
 
-### Paso 2 — Construir y levantar los servicios
+### 3. Start the services
+
+Run from the project root, where `docker-compose.yml` is located:
 
 ```bash
 docker compose up --build -d
 ```
 
-### Paso 3 — Revisar estado y logs
+Check service status:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 airflow-init airflow-webserver airflow-scheduler warehouse-db
 ```
 
-Espera a que `airflow-init` termine correctamente y a que el webserver y el scheduler sigan activos. Si un servicio falla, revisa primero sus logs antes de continuar.
+### 4. Configure the Airflow connection
 
-### Paso 4 — Abrir Airflow
+In the Airflow web interface, open **Admin → Connections** and configure a connection with the ID:
 
-Visita [http://localhost:8080](http://localhost:8080), inicia sesión con `admin` y la contraseña de `.env`.
+```text
+warehouse_postgres
+```
 
-### Paso 5 — Comprobar configuración automática
+Set the host, port, database, username, and password to match the PostgreSQL warehouse service and its configuration. From another container, the host is typically the Compose service name rather than `localhost`.
 
-En Airflow UI, revisa **Admin → Connections** y confirma que existe `warehouse_postgres`, con host `warehouse-db`, puerto `5432` y base definida en `.env`. En **Admin → Variables**, comprueba `source_one_path`, `source_two_path`, `reject_invalid_rows` y `batch_size`. El servicio `airflow-init` las registra al iniciar; no deberían requerir configuración manual.
+### 5. Configure Airflow Variables
 
-### Paso 6 — Ejecutar el DAG
+Open **Admin → Variables** and verify the variables used by the DAG:
 
-En **DAGs**, busca `datamart_daily_etl` y pulsa **Trigger DAG**. Confirma que las tareas `extract_source_one`, `extract_source_two`, `transform_and_deduplicate`, `validate_data_quality` y `load_analytical_warehouse` finalicen correctamente.
+| Variable | Default / purpose |
+|---|---|
+| `source_one_path` | Defaults to `/opt/airflow/data/raw/data.csv` |
+| `source_two_path` | Defaults to `/opt/airflow/data/raw/online_retail.csv` |
+| `batch_size` | Defaults to `5000` rows per insert batch |
 
-El DAG tiene programación diaria (`@daily`), reintentos automáticos y `max_active_runs=1`.
+Make sure the configured paths exist inside the Airflow container, not just on the host machine.
 
-## 6. Validar la carga en PostgreSQL
+### 6. Check the DAG and Python syntax
+
+```powershell
+docker compose exec airflow-scheduler python -m py_compile /opt/airflow/dags/datamart_etl_dag.py
+docker compose exec airflow-scheduler airflow dags list
+```
+
+### 7. Run the pipeline
+
+In Airflow, find `datamart_daily_etl` and trigger a manual run. Wait for all six tasks to finish successfully, especially `load_warehouse` and `validate_warehouse`.
+
+### 8. Validate the loaded data
+
+Run the standalone validator:
+
+```powershell
+docker compose exec airflow-scheduler python /opt/airflow/dags/validate_pipeline.py
+```
+
+Expected final message:
+
+```text
+RESULTADO: TODAS LAS VALIDACIONES APROBADAS.
+```
+
+The standalone validator should be run again after the latest ETL execution so that the results reflect the current warehouse state.
+
+## 🧪 Testing
+
+If the repository includes pytest tests, run them from the environment where the project's dependencies are installed:
 
 ```bash
-docker compose exec warehouse-db psql -U warehouse -d datamart_dw -c "SELECT COUNT(*) FROM analytics.fact_transactions;"
-docker compose exec warehouse-db psql -U warehouse -d datamart_dw -c "SELECT transaction_type, COUNT(*) FROM analytics.fact_transactions GROUP BY 1;"
-docker compose exec warehouse-db psql -U warehouse -d datamart_dw -c "SELECT reason, COUNT(*) FROM analytics.rejected_records GROUP BY 1;"
+pytest -q
 ```
 
-Para ejecutar las consultas de negocio:
+If Ruff is configured in the project, run:
 
 ```bash
-docker compose exec -T warehouse-db psql -U warehouse -d datamart_dw < sql/queries.sql
+ruff check .
+ruff format --check .
 ```
 
-También puedes conectarte desde un cliente SQL local a `localhost:5433`, usando base `datamart_dw` y el usuario y contraseña de `.env`.
+Only report tests as passing when these commands have actually completed successfully.
 
-## 7. Pruebas locales
+## 🧯 Troubleshooting
 
-Las pruebas unitarias no requieren Docker:
+| Symptom | What to check |
+|---|---|
+| DAG does not appear | Check the scheduler logs and run `airflow dags list` |
+| CSV file not found | Confirm the file is mounted into the container and the Airflow Variable path is correct |
+| PostgreSQL connection fails | Check the `warehouse_postgres` connection and Docker Compose service name |
+| `category` violates `NOT NULL` | Confirm missing categories are mapped to `UNCLASSIFIED` |
+| `record_payload` is missing | Confirm `transform_data` generates all required rejection columns |
+| Duplicate conflict or failed upsert | Verify the unique constraints match the `ON CONFLICT` columns |
+| Task fails in Airflow | Inspect the failed task's full log before retrying |
 
-```bash
-python -m pip install pandas pytest
-python -m pytest -q
-python -m compileall -q dags scripts tests
+Do not delete warehouse tables as a first troubleshooting step. Inspect the exception and correct the schema, mapping, or configuration.
+
+## 📂 Repository layout
+
+The following is the intended layout. Keep it aligned with the files actually present in the repository.
+
+```text
+DataMart-S.A.S/
+├── dags/
+│   ├── datamart_etl_dag.py
+│   ├── etl_pipeline.py
+│   └── validate_pipeline.py
+├── data/
+│   ├── raw/
+│   └── staging/
+├── docs/
+│   └── evidence/
+├── reports/
+├── scripts/
+├── sql/
+├── src/
+├── tests/
+├── .env.example
+├── .gitignore
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+└── README.md
 ```
 
-Las pruebas verifican que las devoluciones se separen, el ingreso neto se calcule, los códigos se normalicen, los clientes sin ID se conserven como nulos, los precios no positivos se rechacen y los duplicados equivalentes entre fuentes se eliminen.
+## 📦 Delivery checklist
 
-## 8. Decisiones importantes
+- [ ] `docker-compose.yml` defines the required services.
+- [ ] `.env.example` documents required configuration without real secrets.
+- [ ] DAG code and Python dependencies are included.
+- [ ] DDL scripts create the warehouse tables and required constraints.
+- [ ] Required sample CSVs or seed data are included or documented.
+- [ ] README setup steps work from a clean clone.
+- [ ] Airflow Connection and Variables are documented.
+- [ ] Technical decisions and ambiguous-case handling are documented.
+- [ ] Data model diagram is included or linked.
+- [ ] SQL validation queries cover every question in the assignment's Section 7.
+- [ ] DAG and standalone warehouse validation pass on the latest run.
+- [ ] Evidence images are included in `docs/evidence/`.
+- [ ] `.env`, generated caches, and unnecessary runtime logs are excluded from Git.
 
-- Las líneas con cantidad menor o igual a cero se etiquetan como devoluciones/ajustes; el importe devuelto se calcula en valor absoluto y resta del ingreso neto.
-- Las líneas con precio no positivo, cantidad inválida, fecha inválida o factura/código ausente se envían al log de rechazos con motivo y payload.
-- Los customer ID ausentes se conservan como `NULL`, sin inventar clientes.
-- La descripción canónica se selecciona por frecuencia después de normalizar a mayúsculas; los empates se resuelven alfabéticamente.
-- Los códigos de producto se normalizan a mayúsculas y sin espacios.
-- La clave de deduplicación es un hash estable de factura, código, cantidad, precio, fecha UTC, cliente y país. Es una decisión explícita; requiere revisión si las fuentes pueden reutilizar identificadores de factura.
-- Las fechas se convierten a UTC. Los formatos de entrada se interpretan según la fuente y deben confirmarse con el perfil real.
-- La categoría se estima con reglas heurísticas porque la API de catálogo es opcional. Debe reemplazarse por un catálogo confiable cuando esté disponible.
-- Los datasets son de comercio minorista del Reino Unido. No se inventa una conversión a COP/MXN/PEN; se requieren moneda y tasas de cambio si se comparan importes de distintas monedas.
+---
 
-El detalle está en `docs/decisiones_tecnicas.md`; el modelo está en `docs/data_model.dbml`; las siete preguntas de negocio y subconsultas están en `sql/queries.sql`.
-
-## 9. Apagar el entorno
-
-```bash
-# Detiene servicios y conserva datos en volúmenes.
-docker compose down
-
-# ADVERTENCIA: elimina también los datos persistidos del warehouse y Airflow.
-docker compose down -v
-```
+<p align="center">
+  <strong>🛒 DataMart S.A.S. | Retail Data Engineering</strong><br>
+  <em>Reliable ingestion · Transparent data quality · Auditable analytics</em>
+</p>
