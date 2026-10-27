@@ -97,13 +97,13 @@ The fact load uses `ON CONFLICT (transaction_key) DO NOTHING`. Product rows use 
 
 The screenshot below was provided during project execution and shows the DAG graph with the extraction, transformation, quality validation, warehouse load, and final validation tasks displayed as successful in that captured run.
 
-![Airflow DAG execution evidence](docs/evidence/airflow-dag-success.png)
+![Airflow DAG execution evidence](docs/succesfullycompleted.jpeg)
 
 ### 2. PostgreSQL warehouse validation
 
 The validator output below was provided from the project terminal. It reports that the required tables exist and that the implemented checks for null transaction keys, duplicate keys, invalid prices, and revenue consistency passed.
 
-![Data Warehouse validation evidence](docs/evidence/warehouse-validation.png)
+![Data Warehouse validation evidence](docs/warehousevalidation.jpeg)
 
 ### 📊 Reported warehouse results
 
