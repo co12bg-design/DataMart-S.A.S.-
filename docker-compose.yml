@@ -1,0 +1,93 @@
+# Entorno completo: Airflow, PostgreSQL de metadatos y PostgreSQL analítico.
+# Ejecutar: docker compose up --build -d
+services:
+  airflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    volumes: [airflow_db_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  warehouse-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${WAREHOUSE_DB_USER}
+      POSTGRES_PASSWORD: ${WAREHOUSE_DB_PASSWORD}
+      POSTGRES_DB: ${WAREHOUSE_DB_NAME}
+    ports: ["5433:5432"]
+    volumes:
+      - warehouse_db_data:/var/lib/postgresql/data
+      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WAREHOUSE_DB_USER} -d ${WAREHOUSE_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  airflow-init:
+    build: .
+    depends_on:
+      airflow-db: {condition: service_healthy}
+      warehouse-db: {condition: service_healthy}
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
+      WAREHOUSE_DB_USER: ${WAREHOUSE_DB_USER}
+      WAREHOUSE_DB_PASSWORD: ${WAREHOUSE_DB_PASSWORD}
+      WAREHOUSE_DB_NAME: ${WAREHOUSE_DB_NAME}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    entrypoint: /bin/bash
+    command: -c 'airflow db migrate && (airflow users create --username "$${AIRFLOW_ADMIN_USERNAME}" --password "$${AIRFLOW_ADMIN_PASSWORD}" --firstname Data --lastname Admin --role Admin --email "$${AIRFLOW_ADMIN_EMAIL}" || true) && airflow connections add warehouse_postgres --conn-uri "postgresql://$${WAREHOUSE_DB_USER}:$${WAREHOUSE_DB_PASSWORD}@warehouse-db:5432/$${WAREHOUSE_DB_NAME}" || true; airflow variables set source_one_path /opt/airflow/data/raw/data.csv; airflow variables set source_two_path /opt/airflow/data/raw/online_retail_II.csv; airflow variables set reject_invalid_rows true; airflow variables set batch_size 5000; echo "Airflow inicializado"'
+    restart: "no"
+
+  airflow-webserver:
+    build: .
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    environment: *airflow-env
+    command: webserver
+    ports: ["8080:8080"]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  airflow-scheduler:
+    build: .
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    environment: *airflow-env
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    restart: unless-stopped
+
+volumes:
+  airflow_db_data:
+  warehouse_db_data:

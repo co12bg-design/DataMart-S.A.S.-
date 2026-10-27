@@ -1,0 +1,50 @@
+File: data.csv
+Rows: 541,909
+Columns: 8
+Exact duplicate rows: 5,268
+Unique product codes: 4,070
+Unique countries: 38
+
+Missing values by column:
+  - InvoiceNo: 0
+  - StockCode: 0
+  - Description: 1,454
+  - Quantity: 0
+  - InvoiceDate: 0
+  - UnitPrice: 0
+  - CustomerID: 135,080
+  - Country: 0
+
+Quantity <= 0: 10,624
+Invalid quantity values: 0
+Unit price <= 0: 2,517
+Invalid price values: 0
+Invalid invoice dates: 0
+Earliest valid date: 2010-12-01 08:26:00
+Latest valid date: 2011-12-09 12:50:00
+
+File: online_retail.csv
+Rows: 541,909
+Columns: 9
+Exact duplicate rows: 0
+Unique product codes: 4,070
+Unique countries: 38
+
+Missing values by column:
+  - index: 0
+  - InvoiceNo: 0
+  - StockCode: 0
+  - Description: 1,454
+  - Quantity: 0
+  - InvoiceDate: 0
+  - UnitPrice: 0
+  - CustomerID: 135,080
+  - Country: 0
+
+Quantity <= 0: 10,624
+Invalid quantity values: 0
+Unit price <= 0: 2,517
+Invalid price values: 0
+Invalid invoice dates: 0
+Earliest valid date: 2010-12-01 08:26:00
+Latest valid date: 2011-12-09 12:50:00

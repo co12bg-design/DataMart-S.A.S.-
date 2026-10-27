@@ -1,0 +1,38 @@
+Project DataMart {
+  database_type: 'PostgreSQL'
+  Note: 'Modelo analítico para ventas, devoluciones y rechazos'
+}
+
+Table analytics.dim_product {
+  product_key bigint [pk, increment]
+  product_code text [not null, unique]
+  canonical_description text
+  category text [not null]
+  first_seen_at timestamptz [not null]
+}
+
+Table analytics.fact_transactions {
+  transaction_key text [pk]
+  invoice_no text [not null]
+  product_code text [not null, ref: > analytics.dim_product.product_code]
+  description text
+  quantity int [not null]
+  unit_price numeric [not null]
+  transaction_ts timestamptz [not null]
+  customer_id text
+  country text [not null]
+  source_name text [not null]
+  transaction_type text [not null, note: 'SALE o RETURN']
+  gross_revenue numeric [not null]
+  return_amount numeric [not null]
+  net_revenue numeric [not null]
+  loaded_at timestamptz [not null]
+}
+
+Table analytics.rejected_records {
+  rejection_key text [pk]
+  source_name text [not null]
+  reason text [not null]
+  record_payload jsonb [not null]
+  rejected_at timestamptz [not null]
+}

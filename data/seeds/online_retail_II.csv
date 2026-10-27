@@ -1,0 +1,4 @@
+Invoice,StockCode,Description,Quantity,InvoiceDate,Price,Customer ID,Country
+A001,85123A,white hanging heart t-light holder,3,2010-12-01 09:00:00,2.55,17850,United Kingdom
+A002,POST,POSTAGE,1,2010-12-01 09:10:00,1.00,17850,United Kingdom
+A003,22752,SET 7 BABUSHKA NESTING BOXES,2,2010-12-01 09:20:00,7.65,,France
